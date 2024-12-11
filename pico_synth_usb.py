@@ -1,15 +1,20 @@
-#####################################################
+#############################################################
 # Unit-MIDI synthesizer with Raspberry Pi PICO (USB)
 # FUNCTION:
 #   MIDI-IN Player via USB MIDI (as a USB device)
-# UI:
-#   Card.KB
-#   LCD: SSD1306 (128x64)
+# HARDWARE:
+#   CONTROLER  : Raspberry Pi PICO or PICO2
+#                On board USB works as USB-MIDI device.
+#   SYNTHESIZER: Unit-SYNTH or Unit-MIDI
+#   KEYBOARD   : Card.KB
+#   OLED       : SSD1306 (128x64)
 #
-# Program: circuitpython (V9.2.1)
+# PROGRAM: circuitpython (V9.2.1)
 #   pico_synth_usb.py
 #     1.0.0: 12/10/2024
-#####################################################
+#     1.0.2: 12/11/2024
+#            Pitch bend and modulation wheel are available.
+#############################################################
 # COMMANDS:
 #  CH/ch: change MIDI channel to edit
 #  P /p : change instrument program number
@@ -26,21 +31,24 @@
 #  S /s : change save file number of MIDI settings
 #  LF/lf: load MIDI settings from the file number
 #  SF/Sf: save MIDI settings to the file number
+#  SPACE: Play a test melody
 #
 # VALUE CONTROLES:
-#     [<-]: decrement value - 1
-#  fn+[<-]: decrement value -10
-#     [->]: increment value + 1
-#  fn+[->]: increment value +10
-#     [ UP ]: master volume + 1
-#  fn+[ UP ]: master volume +10
-#     [DOWN]: master volume - 1
-#  fn+[DOWN]: master volume -10
-#####################################################
+#     [LEFT ]: decrement value - 1
+#  fn+[LEFT ]: decrement value -10
+#     [RIGHT]: increment value + 1
+#  fn+[RIGHT]: increment value +10
+#     [ UP  ]: master volume + 1
+#  fn+[ UP  ]: master volume +10
+#     [DOWN ]: master volume - 1
+#  fn+[DOWN ]: master volume -10
+#############################################################
 from board import *
 import digitalio
 from busio import UART			# for UART MIDI
+from busio import I2C			# for I2C
 from time import sleep
+import json
 
 import usb_midi					# for USB MIDI
 import adafruit_midi
@@ -48,12 +56,9 @@ from adafruit_midi.control_change import ControlChange
 from adafruit_midi.note_off import NoteOff
 from adafruit_midi.note_on import NoteOn
 from adafruit_midi.pitch_bend import PitchBend
+from adafruit_midi.program_change import ProgramChange
 
 import adafruit_ssd1306			# for SSD1306 OLED Display
-
-from busio import I2C			# for I2C
-
-import json
 
 #####################
 ### Unit-MIDI class
@@ -83,17 +88,30 @@ class MIDIUnit_class:
                                                           #     {'program':PROGRAM, 'gmbank':GM BANK, 'reverb':[PROGRAM,LEVEL,FEEDBACK], 'chorus':[PROGRAM,LEVEL,FEEDBACK,DELAY], 'vibrate':[RATE,DEPTH,DELAY]}
         for ch in list(range(16)):
             self.midi_in_settings.append({'program':ch, 'gmbank':0, 'reverb':[0,0,0], 'chorus':[0,0,0,0], 'vibrate':[0,0,0]})
+            self.set_pitch_bend_range(ch, 5)
+
 
     # Get instrument name
     def get_instrument_name(self, program, gmbank=0):
-        with open('SYNTH/MIDI_FILE/GM0.TXT', 'r') as f:
-            prg = -1
-            for instrument in f:
-                prg = prg + 1
-#                print(prg, instrument)               
-                if prg == program:
-                    return instrument
-                
+        try:
+            with open('SYNTH/MIDI_FILE/GM0.TXT', 'r') as f:
+                prg = -1
+                for instrument in f:
+                    prg = prg + 1
+                    if prg == program:
+                        return instrument
+
+        except Exception as e:
+            application.show_message('GM LIST:' + e)
+            for cnt in list(range(5)):
+                pico_led.value = False
+                sleep(0.25)
+                pico_led.value = True
+                sleep(0.5)
+
+            display.clear()
+            application.show_midi_channel(True, True)
+
         return '???'
 
     # Set/Get file number to load/save a MIDI-IN settings
@@ -109,21 +127,44 @@ class MIDIUnit_class:
             num = self.midi_file_number()
 
         print('LOAD: SYNTH/MIDI_UNIT/MIDISET{:03d}.json'.format(num))
-        with open('SYNTH/MIDI_UNIT/MIDISET{:03d}.json'.format(num), 'r') as f:
-            self.midi_in_settings = json.load(f)
-            print(self.midi_in_settings)
-    
+        try:
+            with open('SYNTH/MIDI_UNIT/MIDISET{:03d}.json'.format(num), 'r') as f:
+                self.midi_in_settings = json.load(f)
+                print(self.midi_in_settings)
+
+        except Exception as e:
+            application.show_message('ERROR:' + str(e))
+            for cnt in list(range(5)):
+                pico_led.value = False
+                sleep(0.25)
+                pico_led.value = True
+                sleep(0.5)
+
+            display.clear()
+            application.show_midi_channel(True, True)
+
     # Save MIDI settings
     def save_midi_settings(self, num=None):
         if num is None:
             num = self.midi_file_number()
 
         print('SAVE: /SYNTH/MIDI_UNIT/MIDISET{:03d}.json'.format(num))
-        with open('SYNTH/MIDI_UNIT/MIDISET{:03d}.json'.format(num), 'w') as f:
-            print('JSON DUMP:', self.midi_in_settings)
-            json.dump(self.midi_in_settings, f)
-            print('SAVED.')
+        try:
+            with open('SYNTH/MIDI_UNIT/MIDISET{:03d}.json'.format(num), 'w') as f:
+                print('JSON DUMP:', self.midi_in_settings)
+                json.dump(self.midi_in_settings, f)
+                print('SAVED.')
         
+        except Exception as e:
+            application.show_message('ERROR:' + str(e))
+            for cnt in list(range(5)):
+                pico_led.value = False
+                sleep(0.25)
+                pico_led.value = True
+                sleep(0.5)
+
+            display.clear()
+            application.show_midi_channel(True, True)
 
     # MIDI-IN via USB-MIDI
     def midi_in(self):
@@ -198,6 +239,11 @@ class MIDIUnit_class:
     def set_pitch_bend_range(self, channel, value):
         status_byte = 0xB0 + channel
         midi_msg = bytearray([status_byte, 0x65, 0x00, 0x64, 0x00, 0x06, value & 0x7f])
+        self.midi_out(midi_msg)
+
+    def set_modulation_wheel(self, channel, modulation, value):
+        status_byte = 0xB0 + channel
+        midi_msg = bytearray([status_byte, 0x41, 0x00, 0x42, 0x12, 0x40, (0x20 | (channel & 0x0f)), modulation, value, 0x00, 0xF7])
         self.midi_out(midi_msg)
 
     def midi_master_volume(self, vol=None):
@@ -307,14 +353,29 @@ class MIDIUnit_class:
             if isinstance(midi_msg, PitchBend):
                 string_msg = 'PitchBend'
                 #  get value of pitchbend
-                string_val = str(midi_msg.pitch_bend)
+                val = midi_msg.pitch_bend - 8192
+                if val < -8192:
+                    val = -8192
+                elif val > 8191:
+                    val = 8191
+                    
+                string_val = str(midi_msg.pitch_bend) + '/' + str(val)
+                self.set_pitch_bend(midi_msg.channel, val)
+                
+            #  if a Program Change message...
+            if isinstance(midi_msg, ProgramChange):
+                string_msg = 'ProgramChange'
+                #  get CC message number
+                string_val = str(midi_msg.patch)
+                self.midi_instrument(midi_msg.channel, midi_msg.patch)
                 
             #  if a CC message...
             if isinstance(midi_msg, ControlChange):
                 string_msg = 'ControlChange'
                 #  get CC message number
                 string_val = str(midi_msg.control)
-
+                self.set_modulation_wheel(midi_msg.channel, midi_msg.control, midi_msg.value)
+                
             #  update text area with message type and value of message as strings
             print(string_msg + ':' + string_val)
 
@@ -901,11 +962,12 @@ if __name__=='__main__':
         except Exception as e:
             print('CATCH EXCEPTION:', e)
             application.show_midi_channel(False, True)
-            application.show_message('ERROR')
+            application.show_message('ERROR: ' + str(e))
             for cnt in list(range(10)):
                 pico_led.value = False
                 sleep(0.5)
                 pico_led.value = True
                 sleep(1.0)
 
+            display.clear()
             application.show_midi_channel(True, True)
