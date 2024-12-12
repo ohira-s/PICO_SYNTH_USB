@@ -1,4 +1,4 @@
-#############################################################
+################################################################
 # Unit-MIDI synthesizer with Raspberry Pi PICO (USB)
 # FUNCTION:
 #   MIDI-IN Player via USB MIDI (as a USB device)
@@ -12,9 +12,11 @@
 # PROGRAM: circuitpython (V9.2.1)
 #   pico_synth_usb.py
 #     1.0.0: 12/10/2024
-#     1.0.2: 12/11/2024
+#     1.0.1: 12/11/2024
 #            Pitch bend and modulation wheel are available.
-#############################################################
+#     1.0.2: 12/12/2024
+#            Select load MIDI settings file in only existings.
+################################################################
 # COMMANDS:
 #  CH/ch: change MIDI channel to edit
 #  P /p : change instrument program number
@@ -42,12 +44,13 @@
 #  fn+[ UP  ]: master volume +10
 #     [DOWN ]: master volume - 1
 #  fn+[DOWN ]: master volume -10
-#############################################################
+################################################################
 from board import *
 import digitalio
 from busio import UART			# for UART MIDI
 from busio import I2C			# for I2C
 from time import sleep
+import os, re
 import json
 
 import usb_midi					# for USB MIDI
@@ -90,6 +93,7 @@ class MIDIUnit_class:
             self.midi_in_settings.append({'program':ch, 'gmbank':0, 'reverb':[0,0,0], 'chorus':[0,0,0,0], 'vibrate':[0,0,0]})
             self.set_pitch_bend_range(ch, 5)
 
+        self.get_midiset_list()
 
     # Get instrument name
     def get_instrument_name(self, program, gmbank=0):
@@ -114,18 +118,65 @@ class MIDIUnit_class:
 
         return '???'
 
-    # Set/Get file number to load/save a MIDI-IN settings
+    # Get MIDISETxxx.json files list
+    def get_midiset_list(self, num=None):
+        self.midiset_list = os.listdir('SYNTH/MIDI_UNIT/')
+        if len(self.midiset_list):
+            self.midiset_list.sort()
+            do_check = True
+            while do_check:
+                do_check = False
+                for i in list(range(len(self.midiset_list))):
+                    if re.match('^MIDISET[0-9][0-9][0-9].json$', self.midiset_list[i]) is None:
+                        self.midiset_list.pop(i)
+                        do_check = True
+                        break                        
+
+        print('MIDI SET FILES: ', self.midiset_list)
+        if len(self.midiset_list) > 0:
+            if num is None:
+                num = -1
+                
+            self.midiset_list_number = 0
+            for i in list(range(len(self.midiset_list))):
+                self.midiset_list[i] = int(self.midiset_list[i][7:10])
+                if num == self.midiset_list[i]:
+                    self.midiset_list_number = i
+
+            print('MIDI SET FILE NUMERS: ', self.midiset_list)
+
+        else:
+            self.midiset_list_number = -1
+
+    # Set/Get file number to load a MIDI-IN settings
+    def midi_file_number_exist(self, num=None):
+        if self.midiset_list_number < 0:
+            return (self.midiset_list_number, self.midiset_list_number)
+
+        if num is not None:
+            self.midiset_list_number = num % len(self.midiset_list)
+
+        self.midi_file_number(self.midiset_list[self.midiset_list_number])
+        return (self.midiset_list_number, self.midiset_list[self.midiset_list_number])
+
+    # Set/Get file number to save a MIDI-IN settings
     def midi_file_number(self, num=None):
         if num is not None:
             self.midi_in_file_number = num % 1000
         
+        if self.midi_in_file_number in self.midiset_list:
+            self.midiset_list_number = self.midiset_list.index(self.midi_in_file_number)
+            
         return self.midi_in_file_number
-    
+
     # Load MIDI settings
     def load_midi_settings(self, num=None):
         if num is None:
-            num = self.midi_file_number()
+            num = self.midi_file_number_exist()[1]
 
+        if num < 0:
+            return
+        
         print('LOAD: SYNTH/MIDI_UNIT/MIDISET{:03d}.json'.format(num))
         try:
             with open('SYNTH/MIDI_UNIT/MIDISET{:03d}.json'.format(num), 'r') as f:
@@ -154,6 +205,7 @@ class MIDIUnit_class:
                 print('JSON DUMP:', self.midi_in_settings)
                 json.dump(self.midi_in_settings, f)
                 print('SAVED.')
+                self.get_midiset_list(num)
         
         except Exception as e:
             application.show_message('ERROR:' + str(e))
@@ -331,7 +383,7 @@ class MIDIUnit_class:
         midi_msg = self.midi_in()
         if not midi_msg is None:
             # Receiver USB MIDI-IN
-            print('MIDI IN:', midi_msg)
+#            print('MIDI IN:', midi_msg)
             string_msg = 'Unknown Message'
             string_val = 'None'
             
@@ -377,7 +429,7 @@ class MIDIUnit_class:
                 self.set_modulation_wheel(midi_msg.channel, midi_msg.control, midi_msg.value)
                 
             #  update text area with message type and value of message as strings
-            print(string_msg + ':' + string_val)
+#            print(string_msg + ':' + string_val)
 
 ################# End of Unit-MIDI Class Definition #################
 
@@ -498,11 +550,15 @@ class Application_class:
         
         def show_a_parameter(command, color):
             if command == self.COMMAND_MODE_CHANNEL:
-                self._display.text('[CH]an:' + ' {:02d}'.format(self.channel() + 1), 0, 0, color[self.COMMAND_MODE_CHANNEL])
+                self._display.text('[CH]an:' + ' {:02d}'.format(channel + 1), 0, 0, color[self.COMMAND_MODE_CHANNEL])
 
             elif command == self.COMMAND_MODE_PROGRAM:
-                self._display.text('[P]rog:' + '{:03d}'.format(synth.midi_get_instrument(channel)) , 64, 0, color[self.COMMAND_MODE_PROGRAM])
-                self._display.text(synth.get_instrument_name(synth.midi_get_instrument(channel)), 64, 9, color[self.COMMAND_MODE_PROGRAM])
+                if channel == 9:
+                    self._display.text('[P]rog:DRM', 64, 0, color[self.COMMAND_MODE_PROGRAM])
+                    self._display.text('DRUM SET', 64, 9, color[self.COMMAND_MODE_PROGRAM])
+                else:
+                    self._display.text('[P]rog:' + '{:03d}'.format(synth.midi_get_instrument(channel)), 64, 0, color[self.COMMAND_MODE_PROGRAM])
+                    self._display.text(synth.get_instrument_name(synth.midi_get_instrument(channel)), 64, 9, color[self.COMMAND_MODE_PROGRAM])
             
             elif command == self.COMMAND_MODE_REVERB_PROGRAM:
                 self._display.text('[RP]rg:' + '  {:01d}'.format(synth.midi_get_reverb(channel, 0)), 0, 9, color[self.COMMAND_MODE_REVERB_PROGRAM])
@@ -535,12 +591,20 @@ class Application_class:
                 self._display.text('[VdL]y:' + '{:03d}'.format(synth.midi_get_vibrate(channel, 2)), 0, 54, color[self.COMMAND_MODE_VIBRATE_DELAY])
 
             elif command == self.COMMAND_MODE_FILE_LOAD:
+                fnum = synth.midi_file_number_exist()[1]
                 if self.command_mode() == self.COMMAND_MODE_FILE_LOAD:
                     if color[self.COMMAND_MODE_FILE_LOAD] == 0:
-                        self._display.text('[F]lod:' + '{:03d}'.format(synth.midi_file_number()), 64, 54, 0)
+                        if fnum >= 0:
+                            self._display.text('[F]lod:' + '{:03d}'.format(synth.midi_file_number_exist()[1]), 64, 54, 0)
+                        else:
+                            self._display.text('[F]lod:NON', 64, 54, 0)
+
                         return
 
-                self._display.text('[L|S]f:' + '{:03d}'.format(synth.midi_file_number()), 64, 54, 1)
+                if fnum >= 0:
+                    self._display.text('[L|S]f:' + '{:03d}'.format(synth.midi_file_number_exist()[1]), 64, 54, 1)
+                else:
+                    self._display.text('[L|S]f:NON', 64, 54, 1)
  
             elif command == self.COMMAND_MODE_FILE_SAVE:
                 if self.command_mode() == self.COMMAND_MODE_FILE_SAVE:
@@ -561,7 +625,7 @@ class Application_class:
             
         if disp_all:
             if disp == False:
-                print('=== CLEAR')
+#                print('=== CLEAR')
                 self._display.clear()
                 return
 
@@ -569,7 +633,7 @@ class Application_class:
                 self._display.fill_rect(0, 0, 63, 8, 1)
                 color[self.COMMAND_MODE_CHANNEL] = 0
 
-            print('=== SHOW ALL')
+#            print('=== SHOW ALL')
             for cmd in list(range(13)):
                 show_a_parameter(cmd, color)
 
@@ -701,7 +765,10 @@ class CARDKB_class:
             value = synth.midi_get_vibrate(application.channel(), 2) + delta
             synth.midi_vibrate(application.channel(), 2, value)
         
-        elif application.command_mode() == application.COMMAND_MODE_FILE_LOAD or application.command_mode() == application.COMMAND_MODE_FILE_SAVE:
+        elif application.command_mode() == application.COMMAND_MODE_FILE_LOAD:
+            synth.midi_file_number_exist(synth.midi_file_number_exist()[0] + delta)
+        
+        elif application.command_mode() == application.COMMAND_MODE_FILE_SAVE:
             synth.midi_file_number(synth.midi_file_number() + delta)
 
         application.show_midi_channel(True, application.command_mode() == application.COMMAND_MODE_CHANNEL)
