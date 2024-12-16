@@ -11,8 +11,11 @@ CircuitPython USB host driver for MIDI devices
 * Author(s): Scott Shawcroft
 """
 
+#import usb.core
+#import adafruit_usb_host_descriptors
 import usb.core
-import adafruit_usb_host_descriptors
+#import adafruit_usb_host_descriptors
+import adafruit_usb_host_midi.adafruit_usb_host_descriptors as adafruit_usb_host_descriptors
 
 __version__ = "0.8.0"
 __repo__ = "https://github.com/adafruit/Adafruit_CircuitPython_USB_Host_MIDI.git"
