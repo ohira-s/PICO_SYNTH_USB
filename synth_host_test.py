@@ -41,7 +41,8 @@ class MIDIUnit:
         # USB DEVICE   : Vender ID : Product ID
         # KORG nanoKEY2: 0x944       0x115
         self.USB_DEV_nanoKEY2 = {'VenderID': 0x944, 'ProductID': 0x115}
-        self.raw_midi = None
+        self._init = True
+        self._raw_midi = None
         self._usb_midi = None
         
         print('USB PORTS:', usb_midi.ports)
@@ -59,53 +60,66 @@ class MIDIUnit:
 
     # Look for USB MIDI device
     def look_for_usb_midi_device(self):
-        self.raw_midi = None
+        self._raw_midi = None
         self._usb_midi = None
 
-##        print("Looking for midi device")
+        if self._init:
+            print("Looking for midi device")
+
         led_flush = False
-        while self.raw_midi is None:
+        while self._raw_midi is None:
             led_flush = not led_flush
             pico_led.value = led_flush
             
             devices_found = usb.core.find(find_all=True)
-##            print('USB LIST:', devices_found)
-            display.text('USB LIST: ' + str(devices_found), 0, 9, 1)
-            display.show()
+
+            if self._init:
+                print('USB LIST:', devices_found)
+                display.text('USB LIST: ' + str(devices_found), 0, 9, 1)
+                display.show()
 
             for device in devices_found:
-##                print('DEVICE: ', device)
+                if self._init:
+                    print('DEVICE: ', device)
+                
                 try:
-##                    print("Found", hex(device.idVendor), hex(device.idProduct))
-                    display.text('Found: ' + str(hex(device.idVendor)) + str(hex(device.idProduct)), 0, 18, 1)
-                    display.show()
+                    if self._init:
+                        print("Found", hex(device.idVendor), hex(device.idProduct))
+                        display.text('Found: ' + str(hex(device.idVendor)) + str(hex(device.idProduct)), 0, 18, 1)
+                        display.show()
+#                        self.set_note_on(0, 72, 127)
+#                        sleep(1.0)
+#                        self.set_note_off(0, 72)
 
-#                    self.set_note_on(0, 72, 127)
-#                    sleep(1.0)
-#                    self.set_note_off(0, 72)
-
-                    self.raw_midi = MIDI(device)
-##                    print("CONNECT MIDI")
-                    display.text('CONNECT MIDI', 0, 45, 1)
-                    display.show()
+                    self._raw_midi = MIDI(device)
+                    if self._init:
+                        print("CONNECT MIDI")
+                        display.text('CONNECT MIDI', 0, 45, 1)
+                        display.show()
 
                 except ValueError:
-                    self.raw_midi = None
+                    self._raw_midi = None
                     display.text('EXCEPTION', 0, 45, 1)
                     display.show()
                     continue
 
-##        print('Found USB MIDI device.')
-        display.show()
+        if self._init:
+            print('Found USB MIDI device.')
+            display.show()
 
-        if self.raw_midi is None:
+        self._init = False
+
+        if self._raw_midi is None:
             self._usb_midi = None
             pico_led.value = False
             return None
         
-        self._usb_midi = adafruit_midi.MIDI(midi_in=self.raw_midi, in_channel=0)  
+        self._usb_midi = adafruit_midi.MIDI(midi_in=self._raw_midi, in_channel=0)  
 #        self._usb_midi = adafruit_midi.MIDI(midi_in=usb_midi.ports[0], in_channel=0, midi_out=usb_midi.ports[1], out_channel=0)
         pico_led.value = True
+        return self._usb_midi
+
+    def usb_midi(self):
         return self._usb_midi
 
     # MIDI-IN via USB-MIDI
@@ -298,20 +312,20 @@ if __name__=='__main__':
             led_flush = not led_flush
             pico_led.value = led_flush
 
-            if synth.look_for_usb_midi_device() is not None:
-    #            rb = synth.raw_midi.read(4)
-    #            print('RB=', rb)
-    #            midi_msg = None
+            if synth.usb_midi() is not None:
+#                rb = synth._raw_midi.read(4)
+#                print('RB=', rb)
+#                midi_msg = None
                 midi_msg = synth.midi_in()
 
-                display.fill_rect(0, 27, 128, 18, 0)
-                if midi_msg is None:
-                    display.text('MIDI: 000', 0, 27, 1)
-                    display.text('MIDI: none', 0, 36, 1)
+##                display.fill_rect(0, 27, 128, 18, 0)
+##                if midi_msg is None:
+##                    display.text('MIDI: 000', 0, 27, 1)
+##                    display.text('MIDI: none', 0, 36, 1)
                 
                 if not midi_msg is None:
                     # Receiver USB MIDI-IN
-    ##                print('MIDI IN:', midi_msg)
+#                    print('MIDI IN:', midi_msg)
                     string_msg = 'Unknown Message'
                     string_val = 'None'
                     
@@ -321,41 +335,43 @@ if __name__=='__main__':
                         #  get note number
                         string_val = str(midi_msg.note)
                         synth.set_note_on(midi_msg.channel, midi_msg.note, midi_msg.velocity)
-                        display.text('MIDI: NoteOn', 0, 27, 1)
-                        display.text('MIDI: ' + string_val, 0, 36, 1)
+##                        display.text('MIDI: NoteOn', 0, 27, 1)
+##                        display.text('MIDI: ' + string_val, 0, 36, 1)
 
                     #  if a NoteOff message...
-                    if isinstance(midi_msg, NoteOff):
+                    elif isinstance(midi_msg, NoteOff):
                         string_msg = 'NoteOff'
                         #  get note number
                         string_val = str(midi_msg.note)
                         synth.set_note_on(midi_msg.channel, midi_msg.note, 0)
-                        display.text('MIDI: NoteOff', 0, 27, 1)
-                        display.text('MIDI: ' + string_val, 0, 36, 1)
+##                        display.text('MIDI: NoteOff', 0, 27, 1)
+##                        display.text('MIDI: ' + string_val, 0, 36, 1)
 
                     #  if a PitchBend message...
-                    if isinstance(midi_msg, PitchBend):
+                    elif isinstance(midi_msg, PitchBend):
                         string_msg = 'PitchBend'
                         #  get value of pitchbend
                         string_val = str(midi_msg.pitch_bend)
-                        display.text('MIDI: PitchBend', 0, 27, 1)
-                        display.text('MIDI: ' + string_val, 0, 36, 1)
+##                        display.text('MIDI: PitchBend', 0, 27, 1)
+##                        display.text('MIDI: ' + string_val, 0, 36, 1)
 
                     #  if a CC message...
-                    if isinstance(midi_msg, ControlChange):
+                    elif isinstance(midi_msg, ControlChange):
                         string_msg = 'ControlChange'
                         #  get CC message number
                         string_val = str(midi_msg.control)
-                        display.text('MIDI: ControlChange', 0, 27, 1)
-                        display.text('MIDI: ' + string_val, 0, 36, 1)
+##                        display.text('MIDI: ControlChange', 0, 27, 1)
+##                        display.text('MIDI: ' + string_val, 0, 36, 1)
 
                     #  update text area with message type and value of message as strings
-    ##                print(string_msg + ':' + string_val)
+#                    print(string_msg + ':' + string_val)
                     
-                display.show()
+##                display.show()
+#                    synth.look_for_usb_midi_device()
 
             else:
                 sleep(0.2)
+                synth.look_for_usb_midi_device()
         
         except Exception as e:
             print('EXCEPTION: ', e)
