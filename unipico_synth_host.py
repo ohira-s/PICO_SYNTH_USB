@@ -73,6 +73,8 @@ import supervisor
 
 import adafruit_ssd1306			# for SSD1306 OLED Display
 
+import analogio
+
 #####################
 ### Unit-MIDI class
 #####################
@@ -185,7 +187,8 @@ class MIDIUnit_class:
             pico_led.value = False
             return None
         
-        self._usb_midi_host = adafruit_midi.MIDI(midi_in=self._raw_midi_host, in_channel=0)  
+        self._usb_midi_host = adafruit_midi.MIDI(midi_in=self._raw_midi_host)  
+#        self._usb_midi_host = adafruit_midi.MIDI(midi_in=self._raw_midi_host, in_channel=0)  
 #        self._usb_midi = adafruit_midi.MIDI(midi_in=usb_midi.ports[0], in_channel=0, midi_out=usb_midi.ports[1], out_channel=0)
         pico_led.value = True
         return self._usb_midi_host
@@ -489,25 +492,23 @@ class MIDIUnit_class:
 
                 if not midi_msg is None:
                     # Receiver USB MIDI-IN
-        #            print('MIDI IN:', midi_msg)
-                    string_msg = 'Unknown Message'
-                    string_val = 'None'
+#                    print('MIDI IN:', midi_msg)
                     
-                    #  if a NoteOn message...
+                    # if a NoteOn message...
                     if isinstance(midi_msg, NoteOn):
                         string_msg = 'NoteOn'
                         #  get note number
                         string_val = str(midi_msg.note)
                         self.set_note_on(midi_msg.channel, midi_msg.note, midi_msg.velocity)
 
-                    #  if a NoteOff message...
+                    # if a NoteOff message...
                     elif isinstance(midi_msg, NoteOff):
                         string_msg = 'NoteOff'
                         #  get note number
                         string_val = str(midi_msg.note)
                         self.set_note_on(midi_msg.channel, midi_msg.note, 0)
 
-                    #  if a PitchBend message...
+                    # if a PitchBend message...
                     elif isinstance(midi_msg, PitchBend):
                         string_msg = 'PitchBend'
                         #  get value of pitchbend
@@ -520,7 +521,7 @@ class MIDIUnit_class:
                         string_val = str(midi_msg.pitch_bend) + '/' + str(val)
                         self.set_pitch_bend(midi_msg.channel, val)
                         
-                    #  if a Program Change message...
+                    # if a Program Change message...
                     elif isinstance(midi_msg, ProgramChange):
                         string_msg = 'ProgramChange'
                         #  get CC message number
@@ -533,9 +534,13 @@ class MIDIUnit_class:
                         #  get CC message number
                         string_val = str(midi_msg.control)
                         self.set_modulation_wheel(midi_msg.channel, midi_msg.control, midi_msg.value)
+
+                    else:
+                        string_msg = 'Unknown Message'
+                        string_val = 'None'
                         
-                    #  update text area with message type and value of message as strings
-        #            print(string_msg + ':' + string_val)
+                    # update text area with message type and value of message as strings
+                    #print(string_msg + ':' + string_val)
 
             else:
                 sleep(0.2)
