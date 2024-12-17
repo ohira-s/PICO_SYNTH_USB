@@ -1,14 +1,16 @@
-######################################################################
+#########################################################################
 # Unit-MIDI synthesizer with Raspberry Pi PICO (USB HOST)
 # FUNCTION:
-#   MIDI-IN Player via USB MIDI (as a USB Host)
+#   MIDI-IN  player via USB MIDI (as a USB Host or a USB Device)
+#   MIDI-OUT via UART unit1 (2nd UART port)
 # HARDWARE:
-#   CONTROLER  : Raspberry Pi PICO or PICO2
+#   CONTROLER  : Raspberry Pi PICO or PICO2.
 #                On board USB works as USB-MIDI device.
 #                GPIO USB works as USB-MIDI host via OTG cable.
-#   SYNTHESIZER: Unit-SYNTH or Unit-MIDI
-#   KEYBOARD   : Card.KB
-#   OLED       : SSD1306 (128x64)
+#   SYNTHESIZER: Unit-SYNTH or Unit-MIDI (UART unit0)
+#                Unit-MIDI for play and MIDI-OUT (UART unit1: optional)
+#   KEYBOARD   : Card.KB for parameter setting.
+#   OLED       : SSD1306 (128x64) as a display.
 #
 # PROGRAM: circuitpython (V9.2.1)
 #   pico_synth_usb.py (USB device mode program)
@@ -22,7 +24,8 @@
 #     1.0.1: 12/17/2024
 #            Parameter input by using numeric keys, [BS] and [ENTER].
 #            Auto detecte USB Host mode or Device mode.
-######################################################################
+#            2nd UART is available as MIDI-OUT only.
+#########################################################################
 # COMMANDS:
 #  CH/ch: change MIDI channel to edit
 #  P /p : change instrument program number
@@ -54,7 +57,7 @@
 #  fn+[ UP  ]: master volume +10
 #     [DOWN ]: master volume - 1
 #  fn+[DOWN ]: master volume -10
-######################################################################
+#########################################################################
 from board import *
 import digitalio
 from busio import UART			# for UART MIDI
@@ -87,10 +90,13 @@ class MIDIUnit_class:
     #   uart_unit: PICO UART unit number 0 or 1
     #   port     : A tuple of (Tx, Rx)
     #              This argument is NOT USED, to keep compatibility with M5Stack CORE2.
-    def __init__(self, uart_unit=0, port=(GP0, GP1)):
+    def __init__(self, uart_unit=0, port1=(GP0, GP1), port2=(GP4, GP5)):
         # UART MIDI (MIDI-OUT)
-        self._uart = UART(tx=port[0], rx=port[1], baudrate=31250)
-        
+        self._uart1 = UART(tx=port1[0], rx=port1[1], baudrate=31250)
+        self._uart2 = None
+        if port2 is not None:
+            self._uart2 = UART(tx=port2[0], rx=port2[1], baudrate=31250)
+            
         # USB MIDI device
         print('USB MIDI:', usb_midi.ports)
 #        self._usb_midi = adafruit_midi.MIDI(midi_in=usb_midi.ports[0], in_channel=0, midi_out=usb_midi.ports[1], out_channel=0)
@@ -358,14 +364,16 @@ class MIDIUnit_class:
 
     # MIDI-OUT to UART MIDI
     def midi_out(self, midi_msg):
-        self._uart.write(midi_msg)
+        self._uart1.write(midi_msg)
+        if self._uart2 is not None:
+            self._uart2.write(midi_msg)
     
     # Receive MIDI via USB MIDI host, then send it to UART and USB MIDI device
     def midi_in_out(self):
         midi_msg = self.midi_in()
         if not midi_msg is None:
             self.midi_out(midi_msg)
-            self.midi_send(midi_msg)
+#            self.midi_send(midi_msg)
     
     def set_master_volume(self, vol=127):
         midi_msg = bytearray([0xF0, 0x7F, 0x7F, 0x04, 0x01, 0, vol & 0x7f, 0xF7])
