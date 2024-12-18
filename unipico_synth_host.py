@@ -25,8 +25,11 @@
 #            Parameter input by using numeric keys, [BS] and [ENTER].
 #            Auto detecte USB Host mode or Device mode.
 #            2nd UART is available as MIDI-OUT only.
+#     1.0.2: 12/18/2024
+#            MIDI-IN  selector: USB or UART1.
+#            MIDI-OUT selector: UART0 or UART1 or both
 #########################################################################
-# COMMANDS:
+# COMMANDS for SYNTHESIZER PARAMETER SETTING DISPLAY:
 #  CH/ch: change MIDI channel to edit
 #  P /p : change instrument program number
 #  RP/rp: change reverb program number
@@ -42,6 +45,11 @@
 #  S /s : change save file number of MIDI settings
 #  LF/lf: load MIDI settings from the file number
 #  SF/Sf: save MIDI settings to the file number
+# COMMANDS for CONFIGURATION DISPLAY:
+#  M /m : MIDI-IN selector (USB or UART1)
+#  UA/ua: UART0 MIDI-OUT selector (OUT or OFF)
+#  UT/ut: UART1 MIDI-OUT selector (OUT or OFF)
+# COMMANDS common
 #  SPACE: Play a test melody
 #  ESC  : switch ignore MIDI-IN mode
 #
@@ -90,12 +98,12 @@ class MIDIUnit_class:
     #   uart_unit: PICO UART unit number 0 or 1
     #   port     : A tuple of (Tx, Rx)
     #              This argument is NOT USED, to keep compatibility with M5Stack CORE2.
-    def __init__(self, uart_unit=0, port1=(GP0, GP1), port2=(GP4, GP5)):
+    def __init__(self, uart_unit=0, port0=(GP0, GP1), port1=(GP4, GP5)):
         # UART MIDI (MIDI-OUT)
-        self._uart1 = UART(tx=port1[0], rx=port1[1], baudrate=31250)
-        self._uart2 = None
-        if port2 is not None:
-            self._uart2 = UART(tx=port2[0], rx=port2[1], baudrate=31250)
+        self._uart0 = UART(tx=port0[0], rx=port0[1], baudrate=31250)
+        self._uart1 = None
+        if port1 is not None:
+            self._uart1 = UART(tx=port1[0], rx=port1[1], baudrate=31250)
             
         # USB MIDI device
         print('USB MIDI:', usb_midi.ports)
@@ -104,6 +112,32 @@ class MIDIUnit_class:
 #        self._usb_midi = adafruit_midi.MIDI(midi_in=usb_midi.ports[0], midi_out=usb_midi.ports[1], out_channel=0)
 #        self._usb_midi = adafruit_midi.MIDI(midi_out=usb_midi.ports[1], out_channel=0)
 
+        # USB MIDI host
+        # USB DEVICE   : Vender ID : Product ID
+        # KORG nanoKEY2: 0x944       0x115
+        self.USB_DEV_nanoKEY2 = {'VenderID': 0x944, 'ProductID': 0x115}
+        self._init = True
+        self._raw_midi_host  = None
+        self._usb_midi_host  = None
+        self._usb_host_mode  = True
+        self._midi_in_usb    = True			# True: MIDI-IN via USB, False: via UART1
+        self._midi_out_uart0 = True			# MIDI-OUT to UART0 or not
+        self._midi_out_uart1 = True			# MIDI-OUT to UART1 or not
+        
+        print('USB PORTS:', usb_midi.ports)
+        display.fill(0)
+        display.text('USB PORTS:' + str(usb_midi.ports), 0, 0, 1)
+        display.show()
+        
+#        h = usb_host.Port(board.USB_HOST_DP, board.USB_HOST_DM)
+        h = usb_host.Port(board.GP26, board.GP27)		# PIN:31, 32, GND:33
+
+        if supervisor.runtime.usb_connected:
+            print("USB<host>!")
+        else:
+            print("!USB<host>")
+
+        # Initialize MIDI settings
         self.master_volume = 127
         self.channel_reverb = []
         for ch in list(range(16)):
@@ -120,31 +154,29 @@ class MIDIUnit_class:
 
         self.get_midiset_list()
 
-        # USB MIDI host
-        # USB DEVICE   : Vender ID : Product ID
-        # KORG nanoKEY2: 0x944       0x115
-        self.USB_DEV_nanoKEY2 = {'VenderID': 0x944, 'ProductID': 0x115}
-        self._init = True
-        self._raw_midi_host = None
-        self._usb_midi_host = None
-        self._usb_host_mode = True
-        
-        print('USB PORTS:', usb_midi.ports)
-        display.fill(0)
-        display.text('USB PORTS:' + str(usb_midi.ports), 0, 0, 1)
-        display.show()
-        
-#        h = usb_host.Port(board.USB_HOST_DP, board.USB_HOST_DM)
-        h = usb_host.Port(board.GP26, board.GP27)		# PIN:31, 32, GND:33
-
-        if supervisor.runtime.usb_connected:
-            print("USB<host>!")
-        else:
-            print("!USB<host>")
-
     # Is host mode or not
     def as_host(self):
         return self._usb_host_mode
+    
+    # Set/Get MIDI-IN via USB:True or UART (unit1):False
+    def midi_in_via_usb(self, usb=None):
+        if usb is not None:
+            self._midi_in_usb = usb
+            
+        return self._midi_in_usb
+
+    # Set/Get MIDI-OUT to UARTx (unit0 or 1)
+    def midi_out_to(self, uart_unit, flg=None):
+        if uart_unit == 0:
+            if flg is not None:
+                self._midi_out_uart0 = flg
+            return self._midi_out_uart0
+        elif uart_unit == 1:
+            if flg is not None:
+                self._midi_out_uart1 = flg
+            return self._midi_out_uart1
+                    
+        return False
     
     # Look for USB MIDI device
     def look_for_usb_midi_device(self):
@@ -344,30 +376,47 @@ class MIDIUnit_class:
 
     # MIDI-IN via USB-MIDI
     def midi_in(self):
-        try:
-            if self._usb_host_mode:
-                midi_msg = self._usb_midi_host.receive()
-            else:
-                midi_msg = self._usb_midi.receive()
+        # MIDI-IN via USB
+        if self._midi_in_usb:
+            try:
+                if self._usb_host_mode:
+                    midi_msg = self._usb_midi_host.receive()
+                else:
+                    midi_msg = self._usb_midi.receive()
 
-        except:
-            print('CHANGE TO DEVICE MODE')
-            self._usb_host_mode = False
-            midi_msg = self._usb_midi.receive()
-            display.clear()
-            application.show_midi_channel(True, True)
+            except:
+                print('CHANGE TO DEVICE MODE')
+                self._usb_host_mode = False
+                midi_msg = self._usb_midi.receive()
+                display.clear()
+                application.show_midi_channel(True, True)
+                
+            return midi_msg
+                    
+        # MIDI-IN via UART (unit1)
+        elif self._uart1 is not None:
+            try:
+                midi_msg = self._uart1.read(1)
+#                print('UART2:', midi_msg)
+                return midi_msg
+
+            except Exception as e:
+                print('EXCEPTION: UART MIDI-IN:', e)
+                return None
             
-        return midi_msg
+        return None
 
     def midi_send(self, midi_msg):
         self._usb_midi.send(NoteOn(note_key, velosity))
 
     # MIDI-OUT to UART MIDI
     def midi_out(self, midi_msg):
-        self._uart1.write(midi_msg)
-        if self._uart2 is not None:
-            self._uart2.write(midi_msg)
-    
+        if self._midi_out_uart0:
+            self._uart0.write(midi_msg)
+
+        if self._midi_out_uart1 and self._uart1 is not None:
+            self._uart1.write(midi_msg)
+
     # Receive MIDI via USB MIDI host, then send it to UART and USB MIDI device
     def midi_in_out(self):
         midi_msg = self.midi_in()
@@ -526,63 +575,70 @@ class MIDIUnit_class:
             # USB MIDI-IN (MIDI-IN mode is auto detected in host mode or device mode)
 #            if synth.usb_midi_host() is not None:
             midi_msg = synth.midi_in()
+            
+            # MIDI-IN via USB
+            if synth.midi_in_via_usb():
+                if not midi_msg is None:
+                    # Receiver USB MIDI-IN
+    #                    print('MIDI IN:', midi_msg)
+                    
+                    # if a NoteOn message...
+                    if isinstance(midi_msg, NoteOn):
+                        string_msg = 'NoteOn'
+                        #  get note number
+                        string_val = str(midi_msg.note)
+                        self.set_note_on(midi_msg.channel, midi_msg.note, midi_msg.velocity)
 
-            if not midi_msg is None:
-                # Receiver USB MIDI-IN
-#                    print('MIDI IN:', midi_msg)
-                
-                # if a NoteOn message...
-                if isinstance(midi_msg, NoteOn):
-                    string_msg = 'NoteOn'
-                    #  get note number
-                    string_val = str(midi_msg.note)
-                    self.set_note_on(midi_msg.channel, midi_msg.note, midi_msg.velocity)
+                    # if a NoteOff message...
+                    elif isinstance(midi_msg, NoteOff):
+                        string_msg = 'NoteOff'
+                        #  get note number
+                        string_val = str(midi_msg.note)
+                        self.set_note_on(midi_msg.channel, midi_msg.note, 0)
 
-                # if a NoteOff message...
-                elif isinstance(midi_msg, NoteOff):
-                    string_msg = 'NoteOff'
-                    #  get note number
-                    string_val = str(midi_msg.note)
-                    self.set_note_on(midi_msg.channel, midi_msg.note, 0)
-
-                # if a PitchBend message...
-                elif isinstance(midi_msg, PitchBend):
-                    string_msg = 'PitchBend'
-                    #  get value of pitchbend
-                    val = midi_msg.pitch_bend - 8192
-                    if val < -8192:
-                        val = -8192
-                    elif val > 8191:
-                        val = 8191
+                    # if a PitchBend message...
+                    elif isinstance(midi_msg, PitchBend):
+                        string_msg = 'PitchBend'
+                        #  get value of pitchbend
+                        val = midi_msg.pitch_bend - 8192
+                        if val < -8192:
+                            val = -8192
+                        elif val > 8191:
+                            val = 8191
+                            
+                        string_val = str(midi_msg.pitch_bend) + '/' + str(val)
+                        self.set_pitch_bend(midi_msg.channel, val)
                         
-                    string_val = str(midi_msg.pitch_bend) + '/' + str(val)
-                    self.set_pitch_bend(midi_msg.channel, val)
-                    
-                # if a Program Change message...
-                elif isinstance(midi_msg, ProgramChange):
-                    string_msg = 'ProgramChange'
-                    #  get CC message number
-                    string_val = str(midi_msg.patch)
-                    self.midi_instrument(midi_msg.channel, midi_msg.patch)
-                    
-                #  if a CC message...
-                elif isinstance(midi_msg, ControlChange):
-                    string_msg = 'ControlChange'
-                    #  get CC message number
-                    string_val = str(midi_msg.control)
-                    self.set_modulation_wheel(midi_msg.channel, midi_msg.control, midi_msg.value)
+                    # if a Program Change message...
+                    elif isinstance(midi_msg, ProgramChange):
+                        string_msg = 'ProgramChange'
+                        #  get CC message number
+                        string_val = str(midi_msg.patch)
+                        self.midi_instrument(midi_msg.channel, midi_msg.patch)
+                        
+                    #  if a CC message...
+                    elif isinstance(midi_msg, ControlChange):
+                        string_msg = 'ControlChange'
+                        #  get CC message number
+                        string_val = str(midi_msg.control)
+                        self.set_modulation_wheel(midi_msg.channel, midi_msg.control, midi_msg.value)
 
-                else:
-                    string_msg = 'Unknown Message'
-                    string_val = 'None'
-                    
-                # update text area with message type and value of message as strings
-                #print(string_msg + ':' + string_val)
+                    else:
+                        string_msg = 'Unknown Message'
+                        string_val = 'None'
+                        
+                    # update text area with message type and value of message as strings
+                    #print(string_msg + ':' + string_val)
 
-#            else:
-#                sleep(0.2)
-#                synth.look_for_usb_midi_device()
-        
+    #            else:
+    #                sleep(0.2)
+    #                synth.look_for_usb_midi_device()
+
+            # MIDI-IN via UART (unit1)
+            else:
+                if not midi_msg is None:
+                    self.midi_out(midi_msg)
+                
         except Exception as e:
             print('EXCEPTION: ', e)
             display.clear()
@@ -661,7 +717,12 @@ class Application_class:
         self._channel = 0
         self._ignore_midi = False
         
+        self.DISPLAY_TYPE_SYNTH  = 0
+        self.DISPLAY_TYPE_CONFIG = 1
+        self._display_type = self.DISPLAY_TYPE_SYNTH
+        
         self.COMMAND_MODE_NONE = -999
+        self.COMMAND_MODE_U = -4
         self.COMMAND_MODE_R = -3
         self.COMMAND_MODE_C = -2
         self.COMMAND_MODE_V = -1
@@ -679,13 +740,19 @@ class Application_class:
         self.COMMAND_MODE_VIBRATE_DELAY = 12
         self.COMMAND_MODE_FILE_LOAD = 13
         self.COMMAND_MODE_FILE_SAVE = 14
+        
+        self.COMMAND_MODE_MIDI_IN = 15
+        self.COMMAND_MODE_MIDI_OUT_UART0 = 16
+        self.COMMAND_MODE_MIDI_OUT_UART1 = 17
+
         self._command_mode = self.COMMAND_MODE_NONE
         
         self._hilights = [
             [],
             [self.COMMAND_MODE_VIBRATE_RATE, self.COMMAND_MODE_VIBRATE_DEPTH, self.COMMAND_MODE_VIBRATE_DELAY],
             [self.COMMAND_MODE_CHANNEL, self.COMMAND_MODE_CHORUS_PROGRAM, self.COMMAND_MODE_CHORUS_LEVEL, self.COMMAND_MODE_CHORUS_FEEDBACK, self.COMMAND_MODE_CHORUS_DELAY],
-            [self.COMMAND_MODE_REVERB_PROGRAM, self.COMMAND_MODE_REVERB_LEVEL, self.COMMAND_MODE_REVERB_FEEDBACK]
+            [self.COMMAND_MODE_REVERB_PROGRAM, self.COMMAND_MODE_REVERB_LEVEL, self.COMMAND_MODE_REVERB_FEEDBACK],
+            [self.COMMAND_MODE_MIDI_OUT_UART0, self.COMMAND_MODE_MIDI_OUT_UART1]
         ]
 
     def ignore_midi(self, flg=None):
@@ -704,6 +771,12 @@ class Application_class:
             
         return self._channel
     
+    def display_type(self, disp_type=None):
+        if disp_type is not None:
+            self._display_type = disp_type % 2
+            
+        return self._display_type
+            
     def command_mode(self, command=None):
         if command is not None:
             self.show_midi_channel(False)
@@ -714,7 +787,7 @@ class Application_class:
         
     def show_midi_channel(self, disp=True, disp_all=False, channel=None):
         
-        def show_a_parameter(command, color):
+        def show_a_parameter_synth(command, color):
             if command == self.COMMAND_MODE_CHANNEL:
                 if synth.as_host():
                     self._display.text('[CH]an:' + ' {:02d}'.format(channel + 1), 0, 0, color[self.COMMAND_MODE_CHANNEL])
@@ -782,15 +855,51 @@ class Application_class:
                         return
 
                 self._display.text('[L|S]f:' + '{:03d}'.format(synth.midi_file_number()), 64, 54, 1)        
+        
+
+        def show_a_parameter_config(command, color):
+            if command == self.COMMAND_MODE_MIDI_IN:
+                if synth.midi_in_via_usb():
+                    self._display.text('[MdIn]:USB', 64, 0, color[self.COMMAND_MODE_MIDI_IN])
+                else:
+                    self._display.text('[MdIn]:UAT', 64, 0, color[self.COMMAND_MODE_MIDI_IN])
+
+            elif command == self.COMMAND_MODE_MIDI_OUT_UART0:
+                if synth.midi_out_to(0):
+                    self._display.text('[UA]t0:OUT', 0, 9, color[self.COMMAND_MODE_MIDI_OUT_UART0])
+                else:
+                    self._display.text('[UA]t0:OFF', 0, 9, color[self.COMMAND_MODE_MIDI_OUT_UART0])
+
+
+            elif command == self.COMMAND_MODE_MIDI_OUT_UART1:
+                if synth.midi_out_to(1):
+                    self._display.text('[UaT]1:OUT', 64, 9, color[self.COMMAND_MODE_MIDI_OUT_UART1])
+                else:
+                    self._display.text('[UaT]1:OFF', 64, 9, color[self.COMMAND_MODE_MIDI_OUT_UART1])
+
+            elif command < 0:
+                if synth.as_host():
+                    self._display.text('USB HOST',   0, 0, 1)
+                else:
+                    self._display.text('USB DEVICE', 0, 0, 1)
+                    
+                    
+        def show_a_parameter(command, color):
+            if self._display_type == self.DISPLAY_TYPE_SYNTH:
+                show_a_parameter_synth(command, color)
+
+            elif self._display_type == self.DISPLAY_TYPE_CONFIG:
+                show_a_parameter_config(command, color)
 
 
         #--- show_midi_channel MAIN ---#
         channel = self.channel() if channel is None else channel % 16
         
         # Hilight parameter
-        color = [1] * 15
+        color = [1] * 18
         command = self.command_mode()
         hilight = command
+        print('COMMAND=', command, ' ALL=', disp_all)
             
         if disp_all:
             if disp == False:
@@ -798,23 +907,32 @@ class Application_class:
                 self._display.clear()
                 return
 
-            if command == self.COMMAND_MODE_CHANNEL:
-                self._display.fill_rect(0, 0, 63, 8, 1)
-                color[self.COMMAND_MODE_CHANNEL] = 0
+            # Synthesize parameter setting display
+            if self._display_type == self.DISPLAY_TYPE_SYNTH:
+                if command == self.COMMAND_MODE_CHANNEL:
+                    self._display.fill_rect(0, 0, 63, 8, 1)
+                    color[self.COMMAND_MODE_CHANNEL] = 0
 
-#            print('=== SHOW ALL')
-            for cmd in list(range(13)):
-                show_a_parameter(cmd, color)
+#	            print('=== SHOW ALL')
+                for cmd in list(range(self.COMMAND_MODE_CHANNEL, self.COMMAND_MODE_FILE_LOAD + 1)):
+                    show_a_parameter(cmd, color)
 
-            if command == self.COMMAND_MODE_FILE_LOAD or command == self.COMMAND_MODE_FILE_SAVE:
-                show_a_parameter(command, color)
-            else:
-                show_a_parameter(self.COMMAND_MODE_FILE_LOAD, color)
-                
+                if command == self.COMMAND_MODE_FILE_LOAD or command == self.COMMAND_MODE_FILE_SAVE:
+                    show_a_parameter(command, color)
+                else:
+                    show_a_parameter(self.COMMAND_MODE_FILE_LOAD, color)
+            
+            # Configuration display
+            elif self._display_type == self.DISPLAY_TYPE_CONFIG:
+                show_a_parameter(-1, color)
+                for cmd in list(range(self.COMMAND_MODE_MIDI_IN, self.COMMAND_MODE_MIDI_OUT_UART1 + 1)):
+                    show_a_parameter(cmd, color)
+
+            # Show display
             self._display.show()
             return
 
-        # A command
+        # Disp the current one command
         if hilight >= 0:
             print('=== SHOW: ', command)
             color[hilight] = 0 if disp else 1
@@ -822,7 +940,11 @@ class Application_class:
                 hilight = self.COMMAND_MODE_FILE_LOAD
 
             hx = 0 if hilight % 2 == 0 else 64
-            hy = int(hilight / 2) * 9
+            if self._display_type == self.DISPLAY_TYPE_SYNTH:
+                hy = int(hilight / 2) * 9
+            elif self._display_type == self.DISPLAY_TYPE_CONFIG:
+                hy = int((hilight - 14) / 2) * 9
+                
             self._display.fill_rect(hx, hy, 63, 8, 1 if disp else 0)
             if hilight == self.COMMAND_MODE_PROGRAM:
                 self._display.fill_rect(hx, hy + 9, 63, 8, 1 if disp else 0)
@@ -834,7 +956,11 @@ class Application_class:
             print('=== MULT: ', self._hilights[-hilight])
             for cmd in self._hilights[-hilight]:
                 hx = 0 if cmd % 2 == 0 else 64
-                hy = int(cmd / 2) * 9
+                if self._display_type == self.DISPLAY_TYPE_SYNTH:
+                    hy = int(cmd / 2) * 9
+                elif self._display_type == self.DISPLAY_TYPE_CONFIG:
+                    hy = int((cmd - 14) / 2) * 9
+                    
                 self._display.fill_rect(hx, hy, 63, 8, 1 if disp else 0)        
                 color[cmd] = 0 if disp else 1
                 show_a_parameter(cmd, color)
@@ -896,7 +1022,7 @@ class CARDKB_class:
             synth.midi_instrument(application.channel(), (synth.midi_get_instrument(application.channel()) if abs_value is None else abs_value) + delta)
         
         elif application.command_mode() == application.COMMAND_MODE_REVERB_PROGRAM:
-            value = (synth.midi_get_reverb(application.channel(), 0) if abs_value is None else abs_value) + 0 if delta == 0 else (1 if delta > 0 else -1)
+            value = (synth.midi_get_reverb(application.channel(), 0) if abs_value is None else abs_value) + (0 if delta == 0 else (1 if delta > 0 else -1))
             synth.midi_reverb(application.channel(), 0, value)
         
         elif application.command_mode() == application.COMMAND_MODE_REVERB_LEVEL:
@@ -908,7 +1034,7 @@ class CARDKB_class:
             synth.midi_reverb(application.channel(), 2, value)
         
         elif application.command_mode() == application.COMMAND_MODE_CHORUS_PROGRAM:
-            value = (synth.midi_get_chorus(application.channel(), 0) if abs_value is None else abs_value) + 0 if delta == 0 else (1 if delta > 0 else -1)
+            value = (synth.midi_get_chorus(application.channel(), 0) if abs_value is None else abs_value) + (0 if delta == 0 else (1 if delta > 0 else -1))
             synth.midi_chorus(application.channel(), 0, value)
         
         elif application.command_mode() == application.COMMAND_MODE_CHORUS_LEVEL:
@@ -941,12 +1067,20 @@ class CARDKB_class:
         elif application.command_mode() == application.COMMAND_MODE_FILE_SAVE:
             synth.midi_file_number((synth.midi_file_number() if abs_value is None else abs_value) + delta)
 
+        elif application.command_mode() == application.COMMAND_MODE_MIDI_IN:
+            synth.midi_in_via_usb(not synth.midi_in_via_usb())
+
+        elif application.command_mode() == application.COMMAND_MODE_MIDI_OUT_UART0:
+            synth.midi_out_to(0, not synth.midi_out_to(0))
+
+        elif application.command_mode() == application.COMMAND_MODE_MIDI_OUT_UART1:
+            synth.midi_out_to(1, not synth.midi_out_to(1))
+
+        # Redraw the parameter only or all (if COMMAND_MODE_CHANNEL)
         application.show_midi_channel(True, application.command_mode() == application.COMMAND_MODE_CHANNEL)
 
     # Do device task
     def do_task(self):
-        global synth
-        
         # Get keyboard
         kbd = self.read_key()
         if kbd is not None:
@@ -954,8 +1088,16 @@ class CARDKB_class:
             ch = chr(key_code).upper()
             print('KBD: ', hex(key_code), 'CH: ', ch)
 
+            # Change display type
+            if   key_code == 0x09:
+                application.display_type(application.display_type() + 1)
+                self.command = ''
+                self.numeric_param = None
+                display.clear()
+                application.show_midi_channel(True, True)
+
             # Ignore MIDI or NOT
-            if   key_code == 0x1b:
+            elif key_code == 0x1b:
                 application.ignore_midi(not application.ignore_midi())
             
             # Value increment
@@ -1024,129 +1166,160 @@ class CARDKB_class:
 
             # Command interpriter
             else:
-                if 'A' <= ch and ch <= 'Z':
-                    self.command = self.command + ch
-                    print('COMMAND: ', self.command)
-                
-                # Change program command mode
-                if self.command == 'P':
-                    application.command_mode(application.COMMAND_MODE_PROGRAM)
-                    self.numeric_param = None
+                # Synthesizer parameter setting display
+                if application.display_type() == application.DISPLAY_TYPE_SYNTH:
+                    if 'A' <= ch and ch <= 'Z':
+                        self.command = self.command + ch
+                        print('COMMAND S: ', self.command)
                     
-                elif self.command == 'R':
-                    application.command_mode(application.COMMAND_MODE_R)
-                    self.numeric_param = None
-                
-                elif self.command == 'C':
-                    application.command_mode(application.COMMAND_MODE_C)
-                    self.numeric_param = None
-                
-                elif self.command == 'V':
-                    application.command_mode(application.COMMAND_MODE_V)
-                    self.numeric_param = None
+                    # Change program command mode
+                    if self.command == 'P':
+                        application.command_mode(application.COMMAND_MODE_PROGRAM)
+                        self.numeric_param = None
+                        
+                    elif self.command == 'R':
+                        application.command_mode(application.COMMAND_MODE_R)
+                        self.numeric_param = None
                     
-                elif self.command == 'L':
-                    application.command_mode(application.COMMAND_MODE_FILE_LOAD)
-                    self.numeric_param = None
+                    elif self.command == 'C':
+                        application.command_mode(application.COMMAND_MODE_C)
+                        self.numeric_param = None
                     
-                elif self.command == 'S':
-                    application.command_mode(application.COMMAND_MODE_FILE_SAVE)
-                    self.numeric_param = None
+                    elif self.command == 'V':
+                        application.command_mode(application.COMMAND_MODE_V)
+                        self.numeric_param = None
+                        
+                    elif self.command == 'L':
+                        application.command_mode(application.COMMAND_MODE_FILE_LOAD)
+                        self.numeric_param = None
+                        
+                    elif self.command == 'S':
+                        application.command_mode(application.COMMAND_MODE_FILE_SAVE)
+                        self.numeric_param = None
+                        
+                    elif self.command == 'LF':
+                        application.show_midi_channel(False, True)
+                        synth.load_midi_settings()
+                        application.show_midi_channel(True, True)
+                        application.command_mode(application.COMMAND_MODE_NONE)
+                        synth.midi_instrument()
+                        synth.midi_effectors()
+                        self.command = ''
+                        self.numeric_param = None
+                        
+                    elif self.command == 'SF':
+                        synth.save_midi_settings()
+                        application.command_mode(application.COMMAND_MODE_NONE)
+                        self.command = ''
+                        self.numeric_param = None
                     
-                elif self.command == 'LF':
-                    application.show_midi_channel(False, True)
-                    synth.load_midi_settings()
-                    application.show_midi_channel(True, True)
-                    application.command_mode(application.COMMAND_MODE_NONE)
-                    synth.midi_instrument()
-                    synth.midi_effectors()
-                    self.command = ''
-                    self.numeric_param = None
+                    elif self.command == 'RP':
+                        application.command_mode(application.COMMAND_MODE_REVERB_PROGRAM)
+                        self.numeric_param = None
                     
-                elif self.command == 'SF':
-                    synth.save_midi_settings()
-                    application.command_mode(application.COMMAND_MODE_NONE)
-                    self.command = ''
-                    self.numeric_param = None
-                
-                elif self.command == 'RP':
-                    application.command_mode(application.COMMAND_MODE_REVERB_PROGRAM)
-                    self.numeric_param = None
-                
-                elif self.command == 'RL':
-                    application.command_mode(application.COMMAND_MODE_REVERB_LEVEL)
-                    self.numeric_param = None
-                
-                elif self.command == 'RF':
-                    application.command_mode(application.COMMAND_MODE_REVERB_FEEDBACK)
-                    self.numeric_param = None
+                    elif self.command == 'RL':
+                        application.command_mode(application.COMMAND_MODE_REVERB_LEVEL)
+                        self.numeric_param = None
+                    
+                    elif self.command == 'RF':
+                        application.command_mode(application.COMMAND_MODE_REVERB_FEEDBACK)
+                        self.numeric_param = None
 
-                elif self.command == 'CH':
-                    application.command_mode(application.COMMAND_MODE_CHANNEL)
-                    self.numeric_param = None
-                
-                elif self.command == 'CP':
-                    application.command_mode(application.COMMAND_MODE_CHORUS_PROGRAM)
-                    self.numeric_param = None
-                
-                elif self.command == 'CL':
-                    application.command_mode(application.COMMAND_MODE_CHORUS_LEVEL)
-                    self.numeric_param = None
-                
-                elif self.command == 'CF':
-                    application.command_mode(application.COMMAND_MODE_CHORUS_FEEDBACK)
-                    self.numeric_param = None
-                
-                elif self.command == 'CD':
-                    application.command_mode(application.COMMAND_MODE_CHORUS_DELAY)
-                    self.numeric_param = None
-                
-                elif self.command == 'VR':
-                    application.command_mode(application.COMMAND_MODE_VIBRATE_RATE)
-                    self.numeric_param = None
-                
-                elif self.command == 'VD':
-                    application.command_mode(application.COMMAND_MODE_VIBRATE_DEPTH)
-                    self.numeric_param = None
-                
-                elif self.command == 'VL':
-                    application.command_mode(application.COMMAND_MODE_VIBRATE_DELAY)
-                    self.numeric_param = None
-
-                elif ch == 'R':
-                    application.command_mode(application.COMMAND_MODE_R)
-                    self.command = ch
-                    self.numeric_param = None
-
-                elif ch == 'C':
-                    application.command_mode(application.COMMAND_MODE_C)
-                    self.command = ch
-                    self.numeric_param = None
-
-                elif ch == 'V':
-                    application.command_mode(application.COMMAND_MODE_V)
-                    self.command = ch
-                    self.numeric_param = None
-
-                elif ch == 'P':
-                    application.command_mode(application.COMMAND_MODE_PROGRAM)
-                    self.command = ch
-                    self.numeric_param = None
+                    elif self.command == 'CH':
+                        application.command_mode(application.COMMAND_MODE_CHANNEL)
+                        self.numeric_param = None
                     
-                elif ch == 'L':
-                    application.command_mode(application.COMMAND_MODE_FILE_LOAD)
-                    self.command = ch
-                    self.numeric_param = None
+                    elif self.command == 'CP':
+                        application.command_mode(application.COMMAND_MODE_CHORUS_PROGRAM)
+                        self.numeric_param = None
                     
-                elif ch == 'S':
-                    application.command_mode(application.COMMAND_MODE_FILE_SAVE)
-                    self.command = ch
-                    self.numeric_param = None
+                    elif self.command == 'CL':
+                        application.command_mode(application.COMMAND_MODE_CHORUS_LEVEL)
+                        self.numeric_param = None
+                    
+                    elif self.command == 'CF':
+                        application.command_mode(application.COMMAND_MODE_CHORUS_FEEDBACK)
+                        self.numeric_param = None
+                    
+                    elif self.command == 'CD':
+                        application.command_mode(application.COMMAND_MODE_CHORUS_DELAY)
+                        self.numeric_param = None
+                    
+                    elif self.command == 'VR':
+                        application.command_mode(application.COMMAND_MODE_VIBRATE_RATE)
+                        self.numeric_param = None
+                    
+                    elif self.command == 'VD':
+                        application.command_mode(application.COMMAND_MODE_VIBRATE_DEPTH)
+                        self.numeric_param = None
+                    
+                    elif self.command == 'VL':
+                        application.command_mode(application.COMMAND_MODE_VIBRATE_DELAY)
+                        self.numeric_param = None
 
-                else:
-                    application.command_mode(application.COMMAND_MODE_NONE)
-                    self.command = ''
-                    self.numeric_param = None
+                    elif ch == 'R':
+                        application.command_mode(application.COMMAND_MODE_R)
+                        self.command = ch
+                        self.numeric_param = None
+
+                    elif ch == 'C':
+                        application.command_mode(application.COMMAND_MODE_C)
+                        self.command = ch
+                        self.numeric_param = None
+
+                    elif ch == 'V':
+                        application.command_mode(application.COMMAND_MODE_V)
+                        self.command = ch
+                        self.numeric_param = None
+
+                    elif ch == 'P':
+                        application.command_mode(application.COMMAND_MODE_PROGRAM)
+                        self.command = ch
+                        self.numeric_param = None
+                        
+                    elif ch == 'L':
+                        application.command_mode(application.COMMAND_MODE_FILE_LOAD)
+                        self.command = ch
+                        self.numeric_param = None
+                        
+                    elif ch == 'S':
+                        application.command_mode(application.COMMAND_MODE_FILE_SAVE)
+                        self.command = ch
+                        self.numeric_param = None
+
+                    else:
+                        application.command_mode(application.COMMAND_MODE_NONE)
+                        self.command = ''
+                        self.numeric_param = None
+
+                # Configration setting display
+                elif application.display_type() == application.DISPLAY_TYPE_CONFIG:
+                    if 'A' <= ch and ch <= 'Z':
+                        self.command = self.command + ch
+                        print('COMMAND C: ', self.command)
+                    
+                    # Change MIDI-IN via
+                    if self.command == 'M':
+                        application.command_mode(application.COMMAND_MODE_MIDI_IN)
+                        self.numeric_param = None
+                        
+                    elif self.command == 'UA':
+                        application.command_mode(application.COMMAND_MODE_MIDI_OUT_UART0)
+                        self.numeric_param = None
+                        
+                    elif self.command == 'UT':
+                        application.command_mode(application.COMMAND_MODE_MIDI_OUT_UART1)
+                        self.numeric_param = None
+                        
+                    elif ch == 'U':
+                        application.command_mode(application.COMMAND_MODE_U)
+                        self.command = ch
+                        self.numeric_param = None
+                    
+                    else:
+                        application.command_mode(application.COMMAND_MODE_NONE)
+                        self.command = ''
+                        self.numeric_param = None
 
 ################# End of CARD.KB Class Definition #################
     
