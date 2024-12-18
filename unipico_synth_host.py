@@ -28,6 +28,7 @@
 #     1.0.2: 12/18/2024
 #            MIDI-IN  selector: USB or UART1.
 #            MIDI-OUT selector: UART0 or UART1 or both
+#            Resend synthesizer and effector settings to the MIDI-OUT.
 #########################################################################
 # COMMANDS for SYNTHESIZER PARAMETER SETTING DISPLAY:
 #  CH/ch: change MIDI channel to edit
@@ -51,7 +52,9 @@
 #  UT/ut: UART1 MIDI-OUT selector (OUT or OFF)
 # COMMANDS common
 #  SPACE: Play a test melody
+#  fn+SP: Resed synthesizer and effctor settings and play test
 #  ESC  : switch ignore MIDI-IN mode
+#  TAB  : change the display mode
 #
 # VALUE CONTROLES:
 #     [LEFT ]: decrement value - 1
@@ -1134,6 +1137,11 @@ class CARDKB_class:
 
             # Test sound
             elif key_code == 0x20 or key_code == 0xAF:
+                if key_code == 0xAF:
+                    print('RESED instruments and effecrors settings.')
+                    synth.midi_instrument()
+                    synth.midi_effectors()
+
                 print('PROGRAM/VOLUME: ', synth.midi_get_instrument(0), synth.midi_master_volume())
                 synth.set_note_on(application.channel(), 60, 127)
                 sleep(0.5)
