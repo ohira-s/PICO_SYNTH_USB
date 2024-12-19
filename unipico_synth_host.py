@@ -29,6 +29,8 @@
 #            MIDI-IN  selector: USB or UART1.
 #            MIDI-OUT selector: UART0 or UART1 or both
 #            Resend synthesizer and effector settings to the MIDI-OUT.
+#     1.0.3: 12/19/2024
+#            Use SD card file system.
 #########################################################################
 # COMMANDS for SYNTHESIZER PARAMETER SETTING DISPLAY:
 #  CH/ch: change MIDI channel to edit
@@ -92,6 +94,91 @@ from adafruit_usb_host_midi.adafruit_usb_host_midi import MIDI	# for USB MIDI HO
 import supervisor
 
 import adafruit_ssd1306			# for SSD1306 OLED Display
+
+import busio
+import sdcardio
+import storage
+
+###################
+### SD card class
+###################
+class sdcard_class:
+  # Constructor
+  def __init__(self):
+    self.file_opened = None
+
+  # Initialize SD Card device (MOSI=TX, MISO=RX)
+  def setup(self, spi_unit=0, sck_pin=GP18, mosi_pin=GP19, miso_pin=GP16, cs_pin=GP17):
+    print('SD CARD INIT.')
+    spi = busio.SPI(sck_pin, MOSI=mosi_pin, MISO=miso_pin)
+    sd = sdcardio.SDCard(spi, cs_pin)
+
+    vfs = storage.VfsFat(sd)
+    storage.mount(vfs, '/SD')
+
+    fp = open('/SD/SYNTH/MIDIUNIT/MIDISET000.json', 'r')
+    print(fp.read())
+    fp.close()
+    print('SD CARD INIT done.')
+
+  # Opened file
+  def file_opened(self):
+    return self.file_opened
+
+  # File open, needs to close the file
+  def file_open(self, path, fname, mode = 'r'):
+    try:
+      if not self.file_opened is None:
+        self.file_opened.close()
+        self.file_opened = None
+
+      self.file_opened = open(path + fname, mode)
+      return self.file_opened
+
+    except Exception as e:
+      self.file_opened = None
+      print('sccard_class.file_open Exception:', e, path, fname, mode)
+
+    return None
+
+  # Close the file opened currently
+  def file_close(self):
+    try:
+      if not self.file_opened is None:
+        self.file_opened.close()
+
+    except Exception as e:
+      print('sccard_class.file_open Exception:', e, path, fname, mode)
+
+    self.file_opened = None
+
+  # Read JSON format file, then retun JSON data
+  def json_read(self, path, fname):
+    json_data = None
+    try:
+      with open(path + fname, 'r') as f:
+        json_data = json.load(f)
+
+    except Exception as e:
+      print('sccard_class.json_read Exception:', e, path, fname)
+
+    return json_data
+
+  # Write JSON format file
+  def json_write(self, path, fname, json_data):
+    try:
+      with open(path + fname, 'w') as f:
+        json.dump(json_data, f)
+
+      return True
+
+    except Exception as e:
+      print('sccard_class.json_write Exception:', e, path, fname)
+
+    return False
+
+################# End of SD Card Class Definition #################
+
 
 #####################
 ### Unit-MIDI class
@@ -257,12 +344,24 @@ class MIDIUnit_class:
     # Get instrument name
     def get_instrument_name(self, program, gmbank=0):
         try:
-            with open('SYNTH/MIDI_FILE/GM0.TXT', 'r') as f:
-                prg = -1
-                for instrument in f:
-                    prg = prg + 1
-                    if prg == program:
-                        return instrument
+            # SD card file system
+            f = sdcard.file_open('/SD/SYNTH/MIDIFILE/', 'GM0.TXT', 'r')
+            prg = -1
+            for instrument in f:
+                prg = prg + 1
+                if prg == program:
+                    sdcard.file_close()
+                    return instrument
+
+            sdcard.file_close()
+            
+            # PICO internal memory file system
+#            with open('SYNTH/MIDI_FILE/GM0.TXT', 'r') as f:
+#                prg = -1
+#                for instrument in f:
+#                    prg = prg + 1
+#                    if prg == program:
+#                        return instrument
 
         except Exception as e:
             application.show_message('GM LIST:' + e)
@@ -279,7 +378,8 @@ class MIDIUnit_class:
 
     # Get MIDISETxxx.json files list
     def get_midiset_list(self, num=None):
-        self.midiset_list = os.listdir('SYNTH/MIDI_UNIT/')
+        self.midiset_list = os.listdir('/SD/SYNTH/MIDIUNIT/')
+#        self.midiset_list = os.listdir('SYNTH/MIDI_UNIT/')
         if len(self.midiset_list):
             self.midiset_list.sort()
             do_check = True
@@ -338,9 +438,16 @@ class MIDIUnit_class:
         
         print('LOAD: SYNTH/MIDI_UNIT/MIDISET{:03d}.json'.format(num))
         try:
-            with open('SYNTH/MIDI_UNIT/MIDISET{:03d}.json'.format(num), 'r') as f:
-                self.midi_in_settings = json.load(f)
+            # SD card file system
+            settings = sdcard.json_read('/SD/SYNTH/MIDIUNIT/', 'MIDISET{:03d}.json'.format(num))
+            if settings is not None:
+                self.midi_in_settings = settings
                 print(self.midi_in_settings)
+
+            # PICO internal memory file system
+#            with open('SYNTH/MIDI_UNIT/MIDISET{:03d}.json'.format(num), 'r') as f:
+#                self.midi_in_settings = json.load(f)
+#                print(self.midi_in_settings)
 
         except Exception as e:
             application.show_message('ERROR:' + str(e))
@@ -358,13 +465,21 @@ class MIDIUnit_class:
         if num is None:
             num = self.midi_file_number()
 
-        print('SAVE: /SYNTH/MIDI_UNIT/MIDISET{:03d}.json'.format(num))
+        print('SAVE: /SYNTH/MIDIUNIT/MIDISET{:03d}.json'.format(num))
         try:
-            with open('SYNTH/MIDI_UNIT/MIDISET{:03d}.json'.format(num), 'w') as f:
-                print('JSON DUMP:', self.midi_in_settings)
-                json.dump(self.midi_in_settings, f)
-                print('SAVED.')
-                self.get_midiset_list(num)
+            # SD card file system
+            print('JSON DUMP:', self.midi_in_settings)
+            sdcard.json_write('/SD/SYNTH/MIDIUNIT/', 'MIDISET{:03d}.json'.format(num), self.midi_in_settings)
+            print('SAVED.')
+            self.get_midiset_list(num)
+
+
+            # PICO internal memory file system
+#            with open('SYNTH/MIDI_UNIT/MIDISET{:03d}.json'.format(num), 'w') as f:
+#                print('JSON DUMP:', self.midi_in_settings)
+#                json.dump(self.midi_in_settings, f)
+#                print('SAVED.')
+#                self.get_midiset_list(num)
         
         except Exception as e:
             application.show_message('ERROR:' + str(e))
@@ -376,9 +491,9 @@ class MIDIUnit_class:
 
             display.clear()
             application.show_midi_channel(True, True)
-
-    # MIDI-IN via USB-MIDI
-    def midi_in(self):
+       
+    # MIDI-IN via a port of the current mode
+    def midi_in(self):            
         # MIDI-IN via USB
         if self._midi_in_usb:
             try:
@@ -400,7 +515,6 @@ class MIDIUnit_class:
         elif self._uart1 is not None:
             try:
                 midi_msg = self._uart1.read(1)
-#                print('UART2:', midi_msg)
                 return midi_msg
 
             except Exception as e:
@@ -444,9 +558,14 @@ class MIDIUnit_class:
         self.midi_out(midi_msg)
 
     def set_all_notes_off(self, channel = None):
-        midi_msg = bytearray([0xB0 + channel, 0x78, 0])
-        self.midi_out(midi_msg)
-
+        if channel is not None:
+            midi_msg = bytearray([0xB0 + channel, 0x78, 0])
+            self.midi_out(midi_msg)
+        else:
+            for channel in list(range(16)):
+                midi_msg = bytearray([0xB0 + channel, 0x78, 0])
+                self.midi_out(midi_msg)
+                
     def set_reverb(self, channel, prog, level, feedback):
         status_byte = 0xB0 + channel
         midi_msg = bytearray([status_byte, 0x50, prog, status_byte, 0x5B, level])
@@ -574,16 +693,15 @@ class MIDIUnit_class:
         try:
             led_flush = not led_flush
             pico_led.value = led_flush
-
-            # USB MIDI-IN (MIDI-IN mode is auto detected in host mode or device mode)
-#            if synth.usb_midi_host() is not None:
-            midi_msg = synth.midi_in()
             
-            # MIDI-IN via USB
+            # USB MIDI-IN (MIDI-IN mode is auto detected in host mode or device mode)
+            midi_msg = synth.midi_in()
+
+            # MIDI-IN via USB (host or device)
             if synth.midi_in_via_usb():
                 if not midi_msg is None:
                     # Receiver USB MIDI-IN
-    #                    print('MIDI IN:', midi_msg)
+#	                    print('MIDI IN:', midi_msg)
                     
                     # if a NoteOn message...
                     if isinstance(midi_msg, NoteOn):
@@ -633,12 +751,9 @@ class MIDIUnit_class:
                     # update text area with message type and value of message as strings
                     #print(string_msg + ':' + string_val)
 
-    #            else:
-    #                sleep(0.2)
-    #                synth.look_for_usb_midi_device()
-
             # MIDI-IN via UART (unit1)
             else:
+                # UART1 MIDI-IN
                 if not midi_msg is None:
                     self.midi_out(midi_msg)
                 
@@ -1135,7 +1250,7 @@ class CARDKB_class:
             elif key_code == 0xA4:
                 synth.midi_master_volume(synth.midi_master_volume() - 10) 
 
-            # Test sound
+            # Test sound, then all notes off
             elif key_code == 0x20 or key_code == 0xAF:
                 if key_code == 0xAF:
                     print('RESED instruments and effecrors settings.')
@@ -1152,6 +1267,7 @@ class CARDKB_class:
                 synth.set_note_off(application.channel(), 60)
                 synth.set_note_off(application.channel(), 64)
                 synth.set_note_off(application.channel(), 67)
+                synth.set_all_notes_off()
 
             elif (('0' <= ch and ch <= '9') or key_code == 0x0d or key_code == 0x08) and application.command_mode() != application.COMMAND_MODE_NONE:
                 if key_code == 0x0d:
@@ -1333,7 +1449,7 @@ class CARDKB_class:
     
 
 def setup():
-    global pico_led, synth, display, cardkb, view, application
+    global pico_led, sdcard, synth, display, cardkb, view, application
 
     # LED on board
     pico_led = digitalio.DigitalInOut(GP25)
@@ -1365,7 +1481,11 @@ def setup():
 
     print('Start application.')
     application = Application_class(display)
-        
+
+    # SD card
+    sdcard = sdcard_class()
+    sdcard.setup()
+    
     # CRAD.KB
     try:
         print('CARD.KB setup')
@@ -1411,12 +1531,14 @@ def setup():
     display.show()
     
     application.show_midi_channel(True, True)
+    synth.set_all_notes_off()
 
 
 ######### MAIN ##########
 if __name__=='__main__':
     # Setup
     pico_led = None
+    sdcard = None
     synth = None
     display = None
     cardkb = None
