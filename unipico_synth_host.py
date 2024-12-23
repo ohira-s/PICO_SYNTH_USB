@@ -31,6 +31,8 @@
 #            Resend synthesizer and effector settings to the MIDI-OUT.
 #     1.0.3: 12/19/2024
 #            Use SD card file system.
+#     1.0.4: 12/23/2024
+#            Minor bug fixed.
 #########################################################################
 # COMMANDS for SYNTHESIZER PARAMETER SETTING DISPLAY:
 #  CH/ch: change MIDI channel to edit
@@ -695,10 +697,10 @@ class MIDIUnit_class:
             pico_led.value = led_flush
             
             # USB MIDI-IN (MIDI-IN mode is auto detected in host mode or device mode)
-            midi_msg = synth.midi_in()
+            midi_msg = self.midi_in()
 
             # MIDI-IN via USB (host or device)
-            if synth.midi_in_via_usb():
+            if self.midi_in_via_usb():
                 if not midi_msg is None:
                     # Receiver USB MIDI-IN
 #	                    print('MIDI IN:', midi_msg)
