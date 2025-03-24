@@ -33,6 +33,8 @@
 #            Use SD card file system.
 #     1.0.4: 12/23/2024
 #            Minor bug fixed.
+#     1.1.0: 03/24/2025
+#            Non-blocking MIDI data receieve in USB MIDI HOST mode.
 #########################################################################
 # COMMANDS for SYNTHESIZER PARAMETER SETTING DISPLAY:
 #  CH/ch: change MIDI channel to edit
@@ -305,7 +307,8 @@ class MIDIUnit_class:
 #                        sleep(1.0)
 #                        self.set_note_off(0, 72)
 
-                    self._raw_midi_host = MIDI(device)
+#                    self._raw_midi_host = MIDI(device)
+                    self._raw_midi_host = MIDI(device, 0.01)
                     if self._init:
                         print("CONNECT MIDI")
                         display.text('CONNECT MIDI', 0, 45, 1)
