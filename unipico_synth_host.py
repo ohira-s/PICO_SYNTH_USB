@@ -35,6 +35,8 @@
 #            Minor bug fixed.
 #     1.1.0: 03/24/2025
 #            Non-blocking MIDI data receieve in USB MIDI HOST mode.
+#     1.1.1: 04/03/2025
+#            Type any key to work as a USB device in start-up process.
 #########################################################################
 # COMMANDS for SYNTHESIZER PARAMETER SETTING DISPLAY:
 #  CH/ch: change MIDI channel to edit
@@ -281,8 +283,10 @@ class MIDIUnit_class:
             print("Looking for midi device")
 
         led_flush = False
-        try_count = 10
+        try_count = 1000
         while self._raw_midi_host is None and try_count > 0:
+#        while self._raw_midi_host is None and cardkb.read_key() is not None:
+
             try_count = try_count - 1
             led_flush = not led_flush
             pico_led.value = led_flush
@@ -292,6 +296,7 @@ class MIDIUnit_class:
             if self._init:
                 print('USB LIST:', devices_found)
                 display.text('USB LIST: ' + str(devices_found), 0, 9, 1)
+                display.text('Any key for USB dev.', 0, 18, 1)
                 display.show()
 
             for device in devices_found:
@@ -301,7 +306,7 @@ class MIDIUnit_class:
                 try:
                     if self._init:
                         print("Found", hex(device.idVendor), hex(device.idProduct))
-                        display.text('Found: ' + str(hex(device.idVendor)) + str(hex(device.idProduct)), 0, 18, 1)
+                        display.text('Found: ' + str(hex(device.idVendor)) + str(hex(device.idProduct)), 0, 27, 1)
                         display.show()
 #                        self.set_note_on(0, 72, 127)
 #                        sleep(1.0)
@@ -319,6 +324,9 @@ class MIDIUnit_class:
                     display.text('EXCEPTION', 0, 45, 1)
                     display.show()
                     continue
+
+            if cardkb.read_key() is not None:
+                break
 
         if self._init:
             if self._raw_midi_host is None:
@@ -1571,5 +1579,7 @@ if __name__=='__main__':
 
             display.clear()
             application.show_midi_channel(True, True)
+
+
 
 
